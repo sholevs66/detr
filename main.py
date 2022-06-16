@@ -5,8 +5,10 @@ import json
 import random
 import time
 from pathlib import Path
+import logging
 
 import numpy as np
+import os
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -15,6 +17,12 @@ import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
+
+from util.load_model import load_pretrained_weight_omer
+
+from torch.utils.tensorboard import SummaryWriter
+
+#from clearml import Task, Logger
 
 
 def get_args_parser():
@@ -55,6 +63,13 @@ def get_args_parser():
     parser.add_argument('--num_queries', default=100, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
+    parser.add_argument('--enc_bn', action='store_true')
+    parser.add_argument('--dec_bn', action='store_true')
+    parser.add_argument('--batch_first', action='store_true')
+
+    parser.add_argument('--freeze_backbone', action='store_true')
+    parser.add_argument('--freeze_enc', action='store_true')
+    parser.add_argument('--mix_precision', action='store_true')
 
     # * Segmentation
     parser.add_argument('--masks', action='store_true',
@@ -103,6 +118,13 @@ def get_args_parser():
 
 
 def main(args):
+    
+    # clearML
+    #task = Task.init(project_name="DETR", task_name="detr") # this works good - only creates 8 runs on clearml but who cares
+    #if int(os.environ.get('LOCAL_RANK', 0)) == 0:
+    #    task = Task.init(project_name='DETR', task_name='all_bn_detr')
+    print('turn on clearML or tensorboard!')
+
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
@@ -117,9 +139,18 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
-
+    #import ipdb; ipdb.set_trace()
     model, criterion, postprocessors = build_model(args)
     model.to(device)
+
+    if args.freeze_backbone:
+        for p in model.backbone.parameters():
+            p.requires_grad = False
+
+
+    if args.freeze_enc:
+        for p in model.transformer.encoder.parameters():
+            p.requires_grad = False
 
     model_without_ddp = model
     if args.distributed:
@@ -168,6 +199,7 @@ def main(args):
         checkpoint = torch.load(args.frozen_weights, map_location='cpu')
         model_without_ddp.detr.load_state_dict(checkpoint['model'])
 
+    #import ipdb; ipdb.set_trace()
     output_dir = Path(args.output_dir)
     if args.resume:
         if args.resume.startswith('https'):
@@ -175,11 +207,19 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
-        model_without_ddp.load_state_dict(checkpoint['model'])
+        
+        #model_without_ddp.load_state_dict(checkpoint['model'])  # original
+
+        # omer try to match org model with BN model
+        load_pretrained_weight_omer(model_without_ddp, checkpoint)
+
+        #model_without_ddp.load_state_dict(torch.load('8_gpu_run_enc_dec_bn_7.6.22/model_best.pth', map_location='cpu')) # for loading my saved model only pth
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
+    
+    #import ipdb; ipdb.set_trace()
 
     if args.eval:
         test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
@@ -188,15 +228,44 @@ def main(args):
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
+    # logging
+    if args.output_dir:
+        logging.basicConfig(filename=os.path.join(args.output_dir, 'info.log') , level=logging.INFO)
+        logging.info('  resume: %s', args.resume)
+        logging.info('  lr: %f', args.lr)
+        logging.info('  lr_backbone: %f', args.lr_backbone)
+        logging.info('  batch_size: %d', args.batch_size)
+        logging.info('  weight_decay: %f', args.weight_decay)
+        logging.info('  epochs: %d', args.epochs)
+        logging.info('  lr_drop: %d', args.lr_drop)
+        logging.info('  enc_layers: %d', args.enc_layers)
+        logging.info('  dec_layers: %d', args.dec_layers)
+        logging.info('  dim_feedforward: %d', args.dim_feedforward)
+        logging.info('  hidden_dim: %d', args.hidden_dim)
+        logging.info('  dropout: %f', args.dropout)
+        logging.info('  pre-norm: %s', args.pre_norm)
+        logging.info('  enc_bn: %s', args.enc_bn)
+        logging.info('  dec_bn: %s', args.dec_bn)
+        logging.info('  batch_first: %s', args.batch_first)
+        logging.info('  mix_precision: %s', args.mix_precision)
+        logging.info('  freeze_backbone: %s', args.freeze_backbone)
+
+
+
     print("Start training")
+    best_val_ap = 0  # init val ap tracker
+    writer = SummaryWriter(log_dir=args.output_dir)
+
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
+
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
-            args.clip_max_norm)
+            args.clip_max_norm, args.mix_precision)
         lr_scheduler.step()
+
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint before LR drop and every 100 epochs
@@ -220,6 +289,56 @@ def main(args):
                      'epoch': epoch,
                      'n_parameters': n_parameters}
 
+        
+        # train & validation stats to tensorboard
+        a=list(coco_evaluator.coco_eval.values())[0]
+        writer.add_scalar('mAP', a.stats[0], epoch)
+        writer.add_scalars("class_error", {'train':train_stats['class_error'], 'test':test_stats['class_error']}, epoch)
+        writer.add_scalars("loss", {'train':train_stats['loss'], 'test':test_stats['loss']}, epoch)
+        writer.add_scalars("loss_ce", {'train':train_stats['loss_ce'], 'test':test_stats['loss_ce']}, epoch)
+        writer.add_scalars("loss_bbox", {'train':train_stats['loss_bbox'], 'test':test_stats['loss_bbox']}, epoch)
+        writer.add_scalars("loss_giou", {'train':train_stats['loss_giou'], 'test':test_stats['loss_giou']}, epoch)
+
+        '''
+        # save to clearML
+        a=list(coco_evaluator.coco_eval.values())[0]
+        Logger.current_logger().report_scalar("mAP", "val mAP", iteration=epoch, value=a.stats[0])
+        #Task.current_task().get_logger().report_scalar("test", "mAP", iteration=epoch, value=a.stats[0])
+
+        Logger.current_logger().report_scalar("total loss", "train", iteration=epoch, value=train_stats['loss'])
+        Logger.current_logger().report_scalar("total loss", "val", iteration=epoch, value=test_stats['loss'])
+        #Task.current_task().get_logger().report_scalar("train", "loss", iteration=epoch, value=train_stats['loss'])
+        #Task.current_task().get_logger().report_scalar("test", "loss", iteration=epoch, value=test_stats['loss'])
+
+        Logger.current_logger().report_scalar("class error", "train", iteration=epoch, value=train_stats['class_error'])
+        Logger.current_logger().report_scalar("class error", "val", iteration=epoch, value=test_stats['class_error'])
+        #Task.current_task().get_logger().report_scalar("train", "class error", iteration=epoch, value=train_stats['class_error'])
+        #Task.current_task().get_logger().report_scalar("test", "class error", iteration=epoch, value=test_stats['class_error'])
+
+        Logger.current_logger().report_scalar("ce loss", "train", iteration=epoch, value=train_stats['loss_ce'])
+        Logger.current_logger().report_scalar("ce loss", "val", iteration=epoch, value=test_stats['loss_ce'])
+        #Task.current_task().get_logger().report_scalar("train", "loss ce", iteration=epoch, value=train_stats['loss_ce'])
+        #Task.current_task().get_logger().report_scalar("test", "loss ce", iteration=epoch, value=test_stats['loss_ce'])
+
+        Logger.current_logger().report_scalar("bbox loss", "train", iteration=epoch, value=train_stats['loss_bbox'])
+        Logger.current_logger().report_scalar("bbox loss", "val", iteration=epoch, value=test_stats['loss_bbox'])
+        #Task.current_task().get_logger().report_scalar("train", "loss bbox", iteration=epoch, value=train_stats['loss_bbox'])
+        #Task.current_task().get_logger().report_scalar("test", "loss bbox", iteration=epoch, value=test_stats['loss_bbox'])
+
+        Logger.current_logger().report_scalar("giou loss", "train", iteration=epoch, value=train_stats['loss_giou'])
+        Logger.current_logger().report_scalar("giou loss", "val", iteration=epoch, value=test_stats['loss_giou'])
+        #Task.current_task().get_logger().report_scalar("train", "loss giou", iteration=epoch, value=train_stats['loss_giou'])
+        #Task.current_task().get_logger().report_scalar("test", "loss giou", iteration=epoch, value=test_stats['loss_giou'])
+        '''
+        # save best val AP mode
+        if a.stats[0] > best_val_ap:
+            best_val_ap = a.stats[0]
+            torch.save(model_without_ddp.state_dict(), os.path.join(args.output_dir, 'model_best.pth'))
+
+        if args.output_dir:
+            logging.info('  best val AP: %f', best_val_ap)
+
+
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
@@ -238,6 +357,11 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+    writer.flush()
+    writer.close()
+
+
+
 
 
 if __name__ == '__main__':
@@ -245,4 +369,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    
     main(args)
