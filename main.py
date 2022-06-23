@@ -9,6 +9,7 @@ import logging
 
 import numpy as np
 import os
+import sys
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -67,8 +68,11 @@ def get_args_parser():
     parser.add_argument('--dec_bn', action='store_true')
     parser.add_argument('--batch_first', action='store_true')
 
+    parser.add_argument('--enc_resmlp', action='store_true')
+
     parser.add_argument('--freeze_backbone', action='store_true')
     parser.add_argument('--freeze_enc', action='store_true')
+    parser.add_argument('--freeze_dec', action='store_true')
     parser.add_argument('--mix_precision', action='store_true')
 
     # * Segmentation
@@ -143,14 +147,27 @@ def main(args):
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
+    
     if args.freeze_backbone:
         for p in model.backbone.parameters():
             p.requires_grad = False
 
-
+    
     if args.freeze_enc:
         for p in model.transformer.encoder.parameters():
             p.requires_grad = False
+
+    if args.freeze_dec:
+        for p in model.transformer.decoder.parameters():
+            p.requires_grad = False
+
+    '''
+    for p in model.parameters():
+        p.requires_grad = False
+    '''
+    #import ipdb; ipdb.set_trace()
+    
+
 
     model_without_ddp = model
     if args.distributed:
@@ -182,7 +199,7 @@ def main(args):
 
     batch_sampler_train = torch.utils.data.BatchSampler(
         sampler_train, args.batch_size, drop_last=True)
-
+    import ipdb; ipdb.set_trace()
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
                                    collate_fn=utils.collate_fn, num_workers=args.num_workers)
     data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
@@ -208,16 +225,19 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         
-        #model_without_ddp.load_state_dict(checkpoint['model'])  # original
+        #model_without_ddp.load_state_dict(checkpoint['model'])  # original - works for exactly the same 
 
         # omer try to match org model with BN model
         load_pretrained_weight_omer(model_without_ddp, checkpoint)
 
         #model_without_ddp.load_state_dict(torch.load('8_gpu_run_enc_dec_bn_7.6.22/model_best.pth', map_location='cpu')) # for loading my saved model only pth
+        '''
+        # org, return this active later
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
+        '''
     
     #import ipdb; ipdb.set_trace()
 
@@ -249,8 +269,26 @@ def main(args):
         logging.info('  batch_first: %s', args.batch_first)
         logging.info('  mix_precision: %s', args.mix_precision)
         logging.info('  freeze_backbone: %s', args.freeze_backbone)
+        logging.info('  freeze_encoder: %s', args.freeze_enc)
+        logging.info('  freeze_decoder: %s', args.freeze_dec)
+        logging.info('  enc_resmlp: %s', args.enc_resmlp)
 
+    '''
+    # reset BN parmas! delet after
+    for child in model.transformer.encoder.layers.children():
+        for name, layer in child.named_children():
+            if isinstance(layer, torch.nn.BatchNorm1d):
+                layer.reset_parameters()
 
+    for child in model.transformer.decoder.layers.children():
+        for name, layer in child.named_children():
+            if isinstance(layer, torch.nn.BatchNorm1d):
+                layer.reset_parameters()
+    '''
+
+    if args.freeze_backbone:
+        for p in model_without_ddp.backbone.parameters():
+            p.requires_grad = False
 
     print("Start training")
     best_val_ap = 0  # init val ap tracker
@@ -258,13 +296,17 @@ def main(args):
 
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-
+        #import ipdb; ipdb.set_trace()
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm, args.mix_precision)
         lr_scheduler.step()
+
+        #torch.save(model.state_dict(), 'detr_enc_dec_bn_all_freeze_bnStats.pt')
+        #torch.save(model.state_dict(), 'detr_facebook_enc_dec_bn_all_freeze_bn_stats.pt')
+        #sys.exit()
 
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
