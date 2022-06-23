@@ -1,3 +1,8 @@
+python -m torch.distributed.launch --nproc_per_node=8 --use_env main.py --coco_path ~/../fastdata/users/coco/ --output_dir 8_gpu_run_enc_dec_bn_6.6.22 --batch_size
+6 --enc_bn --dec_bn![image](https://user-images.githubusercontent.com/45199264/175338561-36c7e82d-919e-4567-8a23-88c247e68491.png)
+
+
+
 **DE⫶TR**: End-to-End Object Detection with Transformers
 ========
 
