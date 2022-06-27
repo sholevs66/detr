@@ -14,24 +14,31 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
+from res_mlp_files import mlp_mixer
+
 
 class Transformer(nn.Module):
 
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False,
-                 return_intermediate_dec=False, enc_bn=False, dec_bn=False):
+                 return_intermediate_dec=False, enc_bn=False, dec_bn=False, enc_resmlp=False):
         super().__init__()
         #import ipdb; ipdb.set_trace()
-        if enc_bn==False:
-            encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
-                                                    dropout, activation, normalize_before)
-        else:
-            encoder_layer = TransformerEncoderLayer_BN(d_model, nhead, dim_feedforward,
-                                                    dropout, activation, normalize_before)
 
-        encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
-        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
+        if enc_resmlp == False:
+            if enc_bn==False:
+                encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
+                                                        dropout, activation, normalize_before)
+            else:
+                encoder_layer = TransformerEncoderLayer_BN(d_model, nhead, dim_feedforward,
+                                                        dropout, activation, normalize_before)
+
+            encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
+            self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
+        
+        else:
+            self.encoder = mlp_mixer.resmlp_12_224_bn_relu()
 
         if dec_bn==False:
             decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
@@ -50,6 +57,7 @@ class Transformer(nn.Module):
 
         self.d_model = d_model
         self.nhead = nhead
+        self.enc_resmlp = enc_resmlp
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -61,13 +69,14 @@ class Transformer(nn.Module):
         # src = [batch, 256, H/32, W/32]
         #import ipdb; ipdb.set_trace()
         bs, c, h, w = src.shape
-        src = src.flatten(2).permute(2, 0, 1)   # [H/32 * W/32, batch, 256]
+        src = src.flatten(2).permute(0, 2, 1)   # [batch, query, channel] = [2, 400, 256] - for resmlp
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
         mask = mask.flatten(1)
 
         tgt = torch.zeros_like(query_embed)
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+        memory = self.encoder(src) # for resmplp
+        memory = memory.permute(1,0,2) # [batch, query, channel] -> [query, batch, channel]
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed)
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
@@ -521,7 +530,8 @@ def build_transformer(args):
         normalize_before=args.pre_norm,
         return_intermediate_dec=True,
         enc_bn=args.enc_bn,
-        dec_bn=args.dec_bn
+        dec_bn=args.dec_bn,
+        enc_resmlp=args.enc_resmlp
     )
 
 
