@@ -12,20 +12,24 @@ class Mlp(nn.Module):
 
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, norm_layer=None, drop=0., prenorm_layer=None):
         super().__init__()
-
         norm_layer = norm_layer or nn.Identity
         prenorm_layer = prenorm_layer or nn.Identity
 
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.prenorm = prenorm_layer(in_features)
+        #self.prenorm = prenorm_layer(in_features) # org, I'm changing to batchnorm defualt
         self.fc1 = nn.Linear(in_features, hidden_features)
-        self.norm = norm_layer(hidden_features)
+        #self.norm = norm_layer(hidden_features) # org, I'm changing to batchnorm defualt
+        self.norm0 = BatchNorm(in_features)
+        self.norm1 = BatchNorm(out_features)
+        
         self.act = act_layer()
         self.fc2 = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop)
 
+    '''
     def forward(self, x):
+        import ipdb; ipdb.set_trace()
         if self.prenorm:
             x = self.prenorm(x)
         x = self.fc1(x)
@@ -35,6 +39,18 @@ class Mlp(nn.Module):
         x = self.fc2(x)
         x = self.drop(x)
         return x
+    '''
+
+    def forward(self, x):
+        x = self.norm0(x)
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        x = self.norm1(x)
+        return x
+
 
     def fuse_bn(self):
         if isinstance(self.prenorm, BatchNorm):

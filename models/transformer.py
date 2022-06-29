@@ -38,7 +38,7 @@ class Transformer(nn.Module):
             self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
         
         else:
-            self.encoder = mlp_mixer.resmlp_12_224_bn_relu()
+            self.encoder = mlp_mixer.resmlp_6_400_bn_relu_detr()
 
         if dec_bn==False:
             decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
@@ -67,7 +67,11 @@ class Transformer(nn.Module):
     def forward(self, src, mask, query_embed, pos_embed):
         # flatten NxCxHxW to HWxNxC
         # src = [batch, 256, H/32, W/32]
+        # mask - [batch, H/32 * W/32] - Bool padding for batch attention - pad to max in each batch
+        # query_embed - [100, 256] - learned priors for decoder
+
         #import ipdb; ipdb.set_trace()
+
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(0, 2, 1)   # [batch, query, channel] = [2, 400, 256] - for resmlp
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
@@ -189,7 +193,7 @@ class TransformerEncoderLayer(nn.Module):
                      src_mask: Optional[Tensor] = None,
                      src_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None):
-        #import ipdb; ipdb.set_trace()
+
         q = k = self.with_pos_embed(src, pos)   # [qeury, batch, channel] = [768, 2, 256]
         src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]

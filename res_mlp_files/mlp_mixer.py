@@ -146,6 +146,7 @@ class MixerBlock(nn.Module):
             self, dim, seq_len, mlp_ratio=(0.5, 4.0), mlp_layer=Mlp,
             norm_layer=partial(nn.LayerNorm, eps=1e-6), act_layer=nn.GELU, drop=0., drop_path=0.):
         super().__init__()
+
         tokens_dim, channels_dim = [int(x * dim) for x in to_2tuple(mlp_ratio)]
         self.norm1 = norm_layer(dim)
         self.mlp_tokens = mlp_layer(seq_len, tokens_dim, act_layer=act_layer, drop=drop)
@@ -183,7 +184,7 @@ class ResBlock(nn.Module):
         self.linear_tokens = nn.Linear(seq_len, seq_len)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
-        self.mlp_channels = mlp_layer(dim, channel_dim, act_layer=act_layer, drop=drop)
+        self.mlp_channels = mlp_layer(dim, channel_dim, act_layer=act_layer, drop=drop) # send norm to this layer? by default it None=Identity
         self.ls1 = nn.Parameter(init_values * torch.ones(dim))
         self.ls2 = nn.Parameter(init_values * torch.ones(dim))
 
@@ -538,6 +539,17 @@ def resmlp_12_224_bn_relu(pretrained=False, **kwargs):
     """
     model_args = dict(
         patch_size=16, num_blocks=12, embed_dim=256, mlp_ratio=4, block_layer=ResBlock, norm_layer=BatchNorm, act_layer=nn.ReLU, **kwargs)
+    model = _create_mixer('resmlp_12_224', pretrained=pretrained, **model_args)
+    return model
+
+
+@register_model
+def resmlp_6_400_bn_relu_detr(pretrained=False, **kwargs):
+    """ ResMLP-12
+    Paper: `ResMLP: Feedforward networks for image classification...` - https://arxiv.org/abs/2105.03404
+    """
+    model_args = dict(
+        patch_size=16, num_blocks=6, embed_dim=256, mlp_ratio=8, block_layer=ResBlock, norm_layer=BatchNorm, act_layer=nn.ReLU, **kwargs)
     model = _create_mixer('resmlp_12_224', pretrained=pretrained, **model_args)
     return model
 

@@ -314,9 +314,15 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
 
         # TODO make it support different-sized images
         max_size = _max_by_axis([list(img.shape) for img in tensor_list])
+
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size
-        b, c, h, w = batch_shape
+        batch_shape = [len(tensor_list), 3, 640, 640]  # omer - forcing 640x640
+        #b, c, h, w = batch_shape  # this was org
+        b = len(tensor_list)        # omer - forcing 640x640
+        c = 3 # omer - forcing 640x640
+        h = 640 # omer - forcing 640x640
+        w = 640 # omer - forcing 640x640
         dtype = tensor_list[0].dtype
         device = tensor_list[0].device
         tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
