@@ -70,8 +70,6 @@ class Transformer(nn.Module):
         # mask - [batch, H/32 * W/32] - Bool padding for batch attention - pad to max in each batch
         # query_embed - [100, 256] - learned priors for decoder
 
-        #import ipdb; ipdb.set_trace()
-
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(0, 2, 1)   # [batch, query, channel] = [2, 400, 256] - for resmlp
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
@@ -126,8 +124,9 @@ class TransformerDecoder(nn.Module):
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None):
+        # memory_key_padding_mask - [batch, query] - mask for padded pixels - colate_fn to match batch size or to get to 640x640
+
         output = tgt
-        #import ipdb; ipdb.set_trace()
         intermediate = []
 
         for layer in self.layers:
