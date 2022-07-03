@@ -555,6 +555,17 @@ def resmlp_6_400_bn_relu_detr(pretrained=False, **kwargs):
 
 
 @register_model
+def resmlp_12_400_bn_relu_detr(pretrained=False, **kwargs):
+    """ ResMLP-12
+    Paper: `ResMLP: Feedforward networks for image classification...` - https://arxiv.org/abs/2105.03404
+    """
+    model_args = dict(
+        patch_size=16, num_blocks=12, embed_dim=256, mlp_ratio=8, block_layer=ResBlock, norm_layer=BatchNorm, act_layer=nn.ReLU, **kwargs)
+    model = _create_mixer('resmlp_12_224', pretrained=pretrained, **model_args)
+    return model
+
+
+@register_model
 def resmlp_12_224_relu(pretrained=False, **kwargs):
     """ ResMLP-12
     Paper: `ResMLP: Feedforward networks for image classification...` - https://arxiv.org/abs/2105.03404
