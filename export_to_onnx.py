@@ -61,7 +61,7 @@ class Attention(nn.Module):
         return self.to_out(out)
     '''
     def forward(self, query, key, value, attn_mask, key_padding_mask):
-        import ipdb; ipdb.set_trace()
+
         q = self.to_q(query) # [1,1800, 256]
         k = self.to_k(key) # [1,1800, 256]
         v = self.to_v(value) # [1,1800, 256]
@@ -95,7 +95,6 @@ def replace_attention(model):
     for child in model.transformer.encoder.layers.children():
         for name, layer in child.named_children():
             if isinstance(layer, nn.MultiheadAttention):
-                import ipdb; ipdb.set_trace()
                 in_proj_weight = layer.in_proj_weight
                 in_proj_bias = layer.in_proj_bias
                 out_proj_weight = layer.out_proj.weight

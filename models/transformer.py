@@ -28,7 +28,7 @@ class Transformer(nn.Module):
                                                     dropout, activation, normalize_before)
         else:
             encoder_layer = TransformerEncoderLayer_BN(d_model, nhead, dim_feedforward,
-                                                    dropout, activation, normalize_before)
+                                                    dropout, activation, normalize_before, batch_first)
 
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
@@ -39,7 +39,7 @@ class Transformer(nn.Module):
             decoder_norm = nn.LayerNorm(d_model)
         else:
             decoder_layer = TransformerDecoderLayer_BN(d_model, nhead, dim_feedforward,
-                                                    dropout, activation, normalize_before)
+                                                    dropout, activation, normalize_before, batch_first)
             decoder_norm = nn.BatchNorm1d(d_model) # check if this is the problem in all BN DETR
             #decoder_norm = nn.LayerNorm(d_model)
 
@@ -61,18 +61,33 @@ class Transformer(nn.Module):
     def forward(self, src, mask, query_embed, pos_embed):
         # flatten NxCxHxW to HWxNxC
         # src = [batch, 256, H/32, W/32]
-        #import ipdb; ipdb.set_trace()
-        bs, c, h, w = src.shape
-        src = src.flatten(2).permute(2, 0, 1)   # [H/32 * W/32, batch, 256]
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
-        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        mask = mask.flatten(1)
+        
 
-        tgt = torch.zeros_like(query_embed)
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
-                          pos=pos_embed, query_pos=query_embed)
-        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+        if self.batch_first:
+            bs, c, h, w = src.shape
+            src = src.flatten(2).permute(0, 2, 1)   # [batch, H/32 * W/32, 256]
+            pos_embed = pos_embed.flatten(2).permute(0, 2, 1)
+            query_embed = query_embed.unsqueeze(0).repeat(bs, 1, 1) # [batch, query, 256]
+            mask = mask.flatten(1)                                  # [batch, query]
+
+            tgt = torch.zeros_like(query_embed)
+            memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+            hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
+                            pos=pos_embed, query_pos=query_embed)
+            return hs, memory.permute(0, 2, 1).view(bs, c, h, w)
+
+        else:
+            bs, c, h, w = src.shape
+            src = src.flatten(2).permute(2, 0, 1)   # [H/32 * W/32, batch, 256]
+            pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+            query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)  # [100, batch, 256]
+            mask = mask.flatten(1)                                   # [batch, query]
+
+            tgt = torch.zeros_like(query_embed)
+            memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+            hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
+                            pos=pos_embed, query_pos=query_embed)
+            return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
 
 
 class TransformerEncoder(nn.Module):
@@ -219,9 +234,12 @@ class TransformerEncoderLayer(nn.Module):
 class TransformerEncoderLayer_BN(nn.Module):
 
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
-                 activation="relu", normalize_before=False):
+                 activation="relu", normalize_before=False, batch_first=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+
+        self.batch_first = batch_first
+
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
@@ -250,26 +268,52 @@ class TransformerEncoderLayer_BN(nn.Module):
                      src_mask: Optional[Tensor] = None,
                      src_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None):
-        q = k = self.with_pos_embed(src, pos) # [qeury, batch, channel] = [768, 2, 256]
-        src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
-        src = src + self.dropout1(src2) # [qeury, batch, channel] = [768, 2, 256]
-        #import ipdb; ipdb.set_trace()
-        src = src.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
-        src = self.norm1(src) # compute statistics for each channel over the batch,query -> mean=[channel,1] & var=[channel,1]
-        src = src.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
 
-        src2 = self.linear1(src)  # [qeury, batch, dim_feedforward] = [768, 2, 2048]
-        src2 = src2.permute(1, 2, 0) # [qeury, batch, dim_feedforward] -> [batch, dim_feedforward, query]
-        src2 = self.norm2(src2)
-        src2 = src2.permute(2, 0, 1) # [batch, dim_feedforward, query] -> [qeury, batch, dim_feedforward]
-        src2 = self.linear2(self.dropout(self.activation(src2))) # [qeury, batch, channel] = [768, 2, 256]
+        if self.batch_first:
+            # batch first - used for outputting onnx
+            q = k = self.with_pos_embed(src, pos) # [batch, query, channel] = [2, 768, 256]
+            src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
+                                key_padding_mask=src_key_padding_mask)[0]
+            src = src + self.dropout1(src2) # [batch, query, channel] = [2, 768, 256]
+            #import ipdb; ipdb.set_trace()
+            src = src.permute(0, 2, 1) # [batch, query, channel] -> [batch, channel, query]
+            src = self.norm1(src) # compute statistics for each channel over the batch,query -> mean=[channel,1] & var=[channel,1]
+            src = src.permute(0, 2, 1) # [batch, channel, query] -> [batch, query, channel]
 
-        src = src + self.dropout2(src2)
-        src = src.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
-        src = self.norm3(src)
-        src = src.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
-        return src
+            src2 = self.linear1(src)  # [batch, query, dim_feedforward] = [2, 768, 2048]
+            src2 = src2.permute(0, 2, 1) # [batch, query, dim_feedforward] -> [batch, dim_feedforward, query]
+            src2 = self.norm2(src2)
+            src2 = src2.permute(0, 2, 1) # [batch, dim_feedforward, query] -> [batch, query, dim_feedforward]
+            src2 = self.linear2(self.dropout(self.activation(src2))) # [batch, query, channel] = [768, 2, 256]
+
+            src = src + self.dropout2(src2)
+            src = src.permute(0, 2, 1) # [batch, query, channel] -> [batch, channel, query]
+            src = self.norm3(src)
+            src = src.permute(0, 2, 1) # [batch, channel, query] ->  [batch, query, channel]
+            return src
+        
+        else:
+            # original - used for training
+            q = k = self.with_pos_embed(src, pos) # [qeury, batch, channel] = [768, 2, 256]
+            src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
+                                key_padding_mask=src_key_padding_mask)[0]
+            src = src + self.dropout1(src2) # [qeury, batch, channel] = [768, 2, 256]
+            #import ipdb; ipdb.set_trace()
+            src = src.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
+            src = self.norm1(src) # compute statistics for each channel over the batch,query -> mean=[channel,1] & var=[channel,1]
+            src = src.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+
+            src2 = self.linear1(src)  # [qeury, batch, dim_feedforward] = [768, 2, 2048]
+            src2 = src2.permute(1, 2, 0) # [qeury, batch, dim_feedforward] -> [batch, dim_feedforward, query]
+            src2 = self.norm2(src2)
+            src2 = src2.permute(2, 0, 1) # [batch, dim_feedforward, query] -> [qeury, batch, dim_feedforward]
+            src2 = self.linear2(self.dropout(self.activation(src2))) # [qeury, batch, channel] = [768, 2, 256]
+
+            src = src + self.dropout2(src2)
+            src = src.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
+            src = self.norm3(src)
+            src = src.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+            return src
 
     def forward_pre(self, src,
                     src_mask: Optional[Tensor] = None,
@@ -390,10 +434,13 @@ class TransformerDecoderLayer(nn.Module):
 class TransformerDecoderLayer_BN(nn.Module):
 
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
-                 activation="relu", normalize_before=False):
+                 activation="relu", normalize_before=False, batch_first=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+
+        self.batch_first = batch_first
+
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
@@ -427,42 +474,84 @@ class TransformerDecoderLayer_BN(nn.Module):
                      memory_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None):
-        q = k = self.with_pos_embed(tgt, query_pos)     # tgt=q=k=[#queries=100, #batch, 256]
-        tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
-                              key_padding_mask=tgt_key_padding_mask)[0]
-        tgt = tgt + self.dropout1(tgt2)
-        #tgt = self.norm1(tgt)   # normalizes over the last dim - the 256 + multiply & addition by learned params
+        #import ipdb; ipdb.set_trace()
+        if self.batch_first:
+            # batch first for outputting onnx
+            q = k = self.with_pos_embed(tgt, query_pos)     # tgt=q=k=[#queries=100, #batch, 256]
+            tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
+                                key_padding_mask=tgt_key_padding_mask)[0]
+            tgt = tgt + self.dropout1(tgt2)
+            #tgt = self.norm1(tgt)   # normalizes over the last dim - the 256 + multiply & addition by learned params
 
-        tgt = tgt.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
-        tgt = self.norm1(tgt)
-        tgt = tgt.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
-        import ipdb; ipdb.set_trace()
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
-                                   key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
-        tgt = tgt + self.dropout2(tgt2) # [#queries, #batch, 256]
-        
-        #tgt = self.norm2(tgt) # [#queries, #batch, 256], normalizes over the last dim - the 256 + multiply & addition by learned params
-        tgt = tgt.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
-        tgt = self.norm2(tgt)
-        tgt = tgt.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+            tgt = tgt.permute(0, 2, 1) # [batch, query, channel] -> [batch, channel, query]
+            tgt = self.norm1(tgt)
+            tgt = tgt.permute(0, 2, 1) # [batch, channel, query] -> [batch, query, channel]
 
-        #tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt)))) # [#queries, #batch, 256]
+            tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
+                                    key=self.with_pos_embed(memory, pos),
+                                    value=memory, attn_mask=memory_mask,
+                                    key_padding_mask=memory_key_padding_mask)[0]
+            tgt = tgt + self.dropout2(tgt2) # [#batch, #query, 256]
+            
+            #tgt = self.norm2(tgt) # [#queries, #batch, 256], LN=normalizes over the last dim - the 256 + multiply & addition by learned params
+            tgt = tgt.permute(0, 2, 1) # [batch, query, channel] -> [batch, channel, query]
+            tgt = self.norm2(tgt)
+            tgt = tgt.permute(0, 2, 1) # [batch, channel, query] -> [batch, query, channel]
 
-        tgt2 = self.linear1(tgt)  # [qeury, batch, dim_feedforward] = [768, 2, 2048]
-        tgt2 = tgt2.permute(1, 2, 0) # [qeury, batch, dim_feedforward] -> [batch, dim_feedforward, query]
-        tgt2 = self.norm3(tgt2)
-        tgt2 = tgt2.permute(2, 0, 1) # [batch, dim_feedforward, query] -> [qeury, batch, dim_feedforward]
-        tgt2 = self.linear2(self.dropout(self.activation(tgt2))) # [qeury, batch, channel] = [768, 2, 256]
+            #tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt)))) # [#queries, #batch, 256]
 
-        tgt = tgt + self.dropout3(tgt2) # [#queries, #batch, 256]
+            tgt2 = self.linear1(tgt)  # [batch, query, dim_feedforward] = [2, 768, 2048]
+            tgt2 = tgt2.permute(0, 2, 1) # [batch, query, dim_feedforward] -> [batch, dim_feedforward, query]
+            tgt2 = self.norm3(tgt2)
+            tgt2 = tgt2.permute(0, 2, 1) # [batch, dim_feedforward, query] -> [batch, query, dim_feedforward]
+            tgt2 = self.linear2(self.dropout(self.activation(tgt2))) # [batch, query, channel] = [2, 768, 256]
 
-        #tgt = self.norm3(tgt) # [#queries, #batch, 256], normalizes over the last dim - the 256 + multiply & addition by learned params
-        tgt = tgt.permute(1, 2, 0)
-        tgt = self.norm4(tgt)
-        tgt = tgt.permute(2, 0, 1)
-        return tgt
+            tgt = tgt + self.dropout3(tgt2) # [batch, query, 256]
+
+            #tgt = self.norm3(tgt) # [#queries, #batch, 256], normalizes over the last dim - the 256 + multiply & addition by learned params
+            tgt = tgt.permute(0, 2, 1)
+            tgt = self.norm4(tgt)
+            tgt = tgt.permute(0, 2, 1)
+            return tgt
+
+        else:
+            # regular - for training
+            q = k = self.with_pos_embed(tgt, query_pos)     # tgt=q=k=[#queries=100, #batch, 256]
+            tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
+                                key_padding_mask=tgt_key_padding_mask)[0]
+            tgt = tgt + self.dropout1(tgt2)
+            #tgt = self.norm1(tgt)   # normalizes over the last dim - the 256 + multiply & addition by learned params
+
+            tgt = tgt.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
+            tgt = self.norm1(tgt)
+            tgt = tgt.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+
+            tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
+                                    key=self.with_pos_embed(memory, pos),
+                                    value=memory, attn_mask=memory_mask,
+                                    key_padding_mask=memory_key_padding_mask)[0]
+            tgt = tgt + self.dropout2(tgt2) # [#queries, #batch, 256]
+            
+            #tgt = self.norm2(tgt) # [#queries, #batch, 256], normalizes over the last dim - the 256 + multiply & addition by learned params
+            tgt = tgt.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
+            tgt = self.norm2(tgt)
+            tgt = tgt.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+
+            #tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt)))) # [#queries, #batch, 256]
+
+            tgt2 = self.linear1(tgt)  # [qeury, batch, dim_feedforward] = [768, 2, 2048]
+            tgt2 = tgt2.permute(1, 2, 0) # [qeury, batch, dim_feedforward] -> [batch, dim_feedforward, query]
+            tgt2 = self.norm3(tgt2)
+            tgt2 = tgt2.permute(2, 0, 1) # [batch, dim_feedforward, query] -> [qeury, batch, dim_feedforward]
+            tgt2 = self.linear2(self.dropout(self.activation(tgt2))) # [qeury, batch, channel] = [768, 2, 256]
+
+            tgt = tgt + self.dropout3(tgt2) # [#queries, #batch, 256]
+
+            #tgt = self.norm3(tgt) # [#queries, #batch, 256], normalizes over the last dim - the 256 + multiply & addition by learned params
+            tgt = tgt.permute(1, 2, 0)
+            tgt = self.norm4(tgt)
+            tgt = tgt.permute(2, 0, 1)
+            return tgt
 
     def forward_pre(self, tgt, memory,
                     tgt_mask: Optional[Tensor] = None,
