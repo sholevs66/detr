@@ -20,7 +20,7 @@ class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False,
-                 return_intermediate_dec=False, enc_bn=False, dec_bn=False):
+                 return_intermediate_dec=False, enc_bn=False, dec_bn=False, batch_first=False):
         super().__init__()
         #import ipdb; ipdb.set_trace()
         if enc_bn==False:
@@ -50,6 +50,8 @@ class Transformer(nn.Module):
 
         self.d_model = d_model
         self.nhead = nhead
+
+        self.batch_first = batch_first
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -434,7 +436,7 @@ class TransformerDecoderLayer_BN(nn.Module):
         tgt = tgt.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
         tgt = self.norm1(tgt)
         tgt = tgt.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
-
+        import ipdb; ipdb.set_trace()
         tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
@@ -521,7 +523,8 @@ def build_transformer(args):
         normalize_before=args.pre_norm,
         return_intermediate_dec=True,
         enc_bn=args.enc_bn,
-        dec_bn=args.dec_bn
+        dec_bn=args.dec_bn,
+        batch_first=args.batch_first
     )
 
 

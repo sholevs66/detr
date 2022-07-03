@@ -61,7 +61,7 @@ class Attention(nn.Module):
         return self.to_out(out)
     '''
     def forward(self, query, key, value, attn_mask, key_padding_mask):
-        #import ipdb; ipdb.set_trace()
+        import ipdb; ipdb.set_trace()
         q = self.to_q(query) # [1,1800, 256]
         k = self.to_k(key) # [1,1800, 256]
         v = self.to_v(value) # [1,1800, 256]
@@ -95,6 +95,7 @@ def replace_attention(model):
     for child in model.transformer.encoder.layers.children():
         for name, layer in child.named_children():
             if isinstance(layer, nn.MultiheadAttention):
+                import ipdb; ipdb.set_trace()
                 in_proj_weight = layer.in_proj_weight
                 in_proj_bias = layer.in_proj_bias
                 out_proj_weight = layer.out_proj.weight
@@ -144,11 +145,12 @@ def main(args):
 
     import ipdb; ipdb.set_trace()
     if not args.resume:
-        print('enter model path under resume arg!')
-        quit()
+        print('No loaded model!')
+
+    if args.resume:
     #model_pth = torch.load(args.resume, map_location='cpu')
     #import ipdb; ipdb.set_trace()
-    model.load_state_dict(torch.load(args.resume))
+        model.load_state_dict(torch.load(args.resume))
 
     import ipdb; ipdb.set_trace()
 
@@ -158,7 +160,7 @@ def main(args):
     model.eval()
     imgs = torch.zeros(1,3,1280,1440, dtype=torch.float32).to(device)
     outputs = model(imgs)
-    torch.onnx.export(model, imgs, './check.onnx', input_names=['test_input'], output_names=['logits', 'boxes'], opset_version=11)
+    torch.onnx.export(model, imgs, './check_small.onnx', input_names=['test_input'], output_names=['logits', 'boxes'], opset_version=11)
 
 
 
