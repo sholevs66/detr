@@ -38,7 +38,7 @@ class Transformer(nn.Module):
             self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
         
         else:
-            self.encoder = mlp_mixer.resmlp_12_400_bn_relu_detr()
+            self.encoder = mlp_mixer.resmlp_6_400_bn_relu_detr()   # resmlp_6_400_bn_relu_detr / resmlp_12_400_bn_relu_detr
 
         if dec_bn==False:
             decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
