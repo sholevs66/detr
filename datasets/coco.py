@@ -141,6 +141,15 @@ def make_coco_transforms(image_set):
             normalize,
         ])
 
+
+    '''
+    # for fixed 640x640 ARP with padding - should be disabled for regular DETR
+    if image_set == 'val':
+        return T.Compose([
+            T.RandomResize([1088], max_size=1088), 
+            normalize,
+        ])
+    '''
     raise ValueError(f'unknown {image_set}')
 
 

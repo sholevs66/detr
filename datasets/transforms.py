@@ -105,6 +105,17 @@ def resize(image, target, size, max_size=None):
     size = get_size(image.size, size, max_size)
     rescaled_image = F.resize(image, size)
 
+    '''
+    # omer add to make sure 640x640 - sometimes resize gives back 641 which causes problems
+    # disable for regular DETR
+    w_, h_ = rescaled_image.size
+    size_forced = 640
+    if w_ > size_forced:
+        rescaled_image = rescaled_image.crop((0, 0, size_forced, h_))
+    if h_ > size_forced:
+        rescaled_image = rescaled_image.crop((0, 0, w_, size_forced))
+    '''
+
     if target is None:
         return rescaled_image, None
 
