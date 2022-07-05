@@ -34,6 +34,9 @@ def get_args_parser():
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--lr_drop', default=200, type=int)
+    parser.add_argument('--lr_gamma', default=0.1, type=float)
+    parser.add_argument('--scheduler', default=0, type=int)
+    parser.add_argument('--milestones', nargs="+", default=[0], type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
@@ -185,7 +188,12 @@ def main(args):
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+    
+    # 0 = default scheduler / 1 = Multistep scheudler for resmlp trials
+    if args.scheduler == 0:
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop, args.lr_gamma)
+    elif args.scheduler == 1:
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, args.milestones, args.lr_gamma)
 
     dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
@@ -257,6 +265,8 @@ def main(args):
         logging.info('  batch_size: %d', args.batch_size)
         logging.info('  weight_decay: %f', args.weight_decay)
         logging.info('  epochs: %d', args.epochs)
+        logging.info('  scheduler type (0=default / 1=multi): %d', args.scheduler)
+        logging.info("milestones (meaningful only for scheduler type = 1): {}".format(' '.join(map(str, args.milestones))))
         logging.info('  lr_drop: %d', args.lr_drop)
         logging.info('  enc_layers: %d', args.enc_layers)
         logging.info('  dec_layers: %d', args.dec_layers)
