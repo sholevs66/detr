@@ -157,9 +157,9 @@ def main(args):
 
     # to onnx
     model.eval()
-    imgs = torch.zeros(1,3,1280,1440, dtype=torch.float32).to(device)
+    imgs = torch.zeros(1,3,600,800, dtype=torch.float32).to(device)
     outputs = model(imgs)
-    torch.onnx.export(model, imgs, './check_small.onnx', input_names=['test_input'], output_names=['logits', 'boxes'], training=torch.onnx.TrainingMode.PRESERVE, opset_version=11)
+    torch.onnx.export(model, imgs, './detr_r50_enc_bn_dec_bn_2layers_600x800_SingleOutHead.onnx', input_names=['test_input'], output_names=['logits', 'boxes'], training=torch.onnx.TrainingMode.PRESERVE, opset_version=11)
 
 
 

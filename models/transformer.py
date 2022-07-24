@@ -157,9 +157,16 @@ class TransformerDecoder(nn.Module):
                 output = self.norm(output)
             else:
                 # If BN
-                output = output.permute(1, 2, 0) # [qeury, batch, channel]=[100,2,256] -> [batch, channel, query]
-                output = self.norm(output)
-                output = output.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+                # regular
+                if self.layers[0].batch_first == False:
+                    output = output.permute(1, 2, 0) # [qeury, batch, channel]=[100,2,256] -> [batch, channel, query]
+                    output = self.norm(output)
+                    output = output.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+                else:
+                    # for onnx output which uses 'batch_first' = True
+                    output = output.permute(0, 2, 1) # [batch, query, channel]=[2,100,256] -> [batch, channel, query]
+                    output = self.norm(output)
+                    output = output.permute(0, 2, 1) # [batch, channel, query] -> [batch, query, channel]
             if self.return_intermediate:
                 intermediate.pop()
                 intermediate.append(output)
