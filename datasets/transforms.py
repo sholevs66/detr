@@ -105,13 +105,14 @@ def resize(image, target, size, max_size=None):
     size = get_size(image.size, size, max_size)
     rescaled_image = F.resize(image, size)
     
-    # omer add to make sure 640x640 - sometimes resize gives back 641 which causes problems
+    # omer add to make sure 640x640 ARP - sometimes resize gives back 641 which causes problems
+    '''
     w_, h_ = rescaled_image.size
     if w_ > 640:
         rescaled_image = rescaled_image.crop((0, 0, 640, h_))
     if h_ > 640:
         rescaled_image = rescaled_image.crop((0, 0, w_, 640))
-
+    '''
 
     if target is None:
         return rescaled_image, None

@@ -145,15 +145,16 @@ def make_coco_transforms(image_set):
 
 
     # resize to fixed 640x604 for ResMLP, here we make sure higher dim is 640 and later pad in colate_fn
+    # if [(640x640)] -> bad resize / if [640] -> ARP
     if image_set == 'train':
         return T.Compose([
             T.RandomHorizontalFlip(),
             T.RandomSelect(
-                T.RandomResize([640], max_size=640),
+                T.RandomResize([(640,640)]),
                 T.Compose([
                     T.RandomResize([400, 500, 600]),
                     T.RandomSizeCrop(384, 600),
-                    T.RandomResize([640], max_size=640),
+                    T.RandomResize([(640, 640)]),
                 ])
             ),
             normalize,
@@ -162,7 +163,7 @@ def make_coco_transforms(image_set):
 
     if image_set == 'val':
         return T.Compose([
-            T.RandomResize([640], max_size=640), 
+            T.RandomResize([(640,640)]), 
             normalize,
         ]) 
 

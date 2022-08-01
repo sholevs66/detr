@@ -124,7 +124,13 @@ class TransformerDecoder(nn.Module):
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None):
+        # tgt = [100, batch, 256] = initialized to 0
+        # tgt_mask = None
+        # memory_mask = None
+        # tgt_key_padding_mask = None
+        # pos = [query, batch, 256]
         # memory_key_padding_mask - [batch, query] - mask for padded pixels - colate_fn to match batch size or to get to 640x640
+        # query_pos = [100, batch, 256] - positional emb for queriers - This is really the learned prior/queries - Fair's naming is bad!
 
         output = tgt
         intermediate = []
@@ -145,7 +151,7 @@ class TransformerDecoder(nn.Module):
                     #output = output.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
                     #intermediate.append(output)
                     intermediate.append(self.norm(output.permute(1, 2, 0)).permute(2, 0, 1))
-
+        '''
         #import ipdb; ipdb.set_trace()
         if self.norm is not None:
             if isinstance(self.norm, nn.LayerNorm):
@@ -158,7 +164,7 @@ class TransformerDecoder(nn.Module):
             if self.return_intermediate:
                 intermediate.pop()
                 intermediate.append(output)
-
+        '''
         if self.return_intermediate:
             return torch.stack(intermediate)
 

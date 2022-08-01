@@ -20,8 +20,9 @@ class Mlp(nn.Module):
         #self.prenorm = prenorm_layer(in_features) # org, I'm changing to batchnorm defualt
         self.fc1 = nn.Linear(in_features, hidden_features)
         #self.norm = norm_layer(hidden_features) # org, I'm changing to batchnorm defualt
-        self.norm0 = BatchNorm(in_features)
-        self.norm1 = BatchNorm(out_features)
+        #self.norm = BatchNorm(hidden_features)
+        #self.norm0 = BatchNorm(in_features) # used in (4) to (9)
+        #self.norm1 = BatchNorm(out_features) # used in (4) to (9)
         
         self.act = act_layer()
         self.fc2 = nn.Linear(hidden_features, out_features)
@@ -42,13 +43,14 @@ class Mlp(nn.Module):
     '''
 
     def forward(self, x):
-        x = self.norm0(x)
+        #x = self.norm0(x) # used in (4) - (9)
         x = self.fc1(x)
+        #x = self.norm(x) # check (11)
         x = self.act(x)
         x = self.drop(x)
         x = self.fc2(x)
         x = self.drop(x)
-        x = self.norm1(x)
+        #x = self.norm1(x) # used in (4) - (9)
         return x
 
 

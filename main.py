@@ -233,10 +233,10 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         
-        #model_without_ddp.load_state_dict(checkpoint['model'])  # original - works for exactly the same 
+        model_without_ddp.load_state_dict(checkpoint['model'])  # original - works for exactly the same 
 
         # omer try to match org model with BN model
-        load_pretrained_weight_omer(model_without_ddp, checkpoint)
+        #load_pretrained_weight_omer(model_without_ddp, checkpoint)
 
         #model_without_ddp.load_state_dict(torch.load('8_gpu_run_enc_dec_bn_7.6.22/model_best.pth', map_location='cpu')) # for loading my saved model only pth
         '''
