@@ -32,7 +32,7 @@ def get_args_parser():
     parser.add_argument('--batch_size', default=2, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=300, type=int)
-    parser.add_argument('--lr_drop', default=200, type=int)
+    parser.add_argument('--lr_drop', default=400, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
@@ -69,6 +69,7 @@ def get_args_parser():
 
     parser.add_argument('--freeze_backbone', action='store_true')
     parser.add_argument('--freeze_enc', action='store_true')
+    parser.add_argument('--freeze_dec', action='store_true')
     parser.add_argument('--mix_precision', action='store_true')
 
     # * Segmentation
@@ -152,6 +153,11 @@ def main(args):
         for p in model.transformer.encoder.parameters():
             p.requires_grad = False
 
+    
+    if args.freeze_dec:
+        for p in model.transformer.decoder.parameters():
+            p.requires_grad = False
+
     model_without_ddp = model
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
@@ -208,16 +214,18 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         
-        model_without_ddp.load_state_dict(checkpoint['model'])  # original
-
+        #model_without_ddp.load_state_dict(checkpoint['model'])  # original
+        #import ipdb; ipdb.set_trace()
         # omer try to match org model with BN model
-        #load_pretrained_weight_omer(model_without_ddp, checkpoint)
-
+        load_pretrained_weight_omer(model_without_ddp, checkpoint)
+        #import ipdb; ipdb.set_trace()
         #model_without_ddp.load_state_dict(torch.load('8_gpu_run_enc_dec_bn_7.6.22/model_best.pth', map_location='cpu')) # for loading my saved model only pth
+        '''
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
+        '''
     
     #import ipdb; ipdb.set_trace()
 
@@ -249,6 +257,8 @@ def main(args):
         logging.info('  batch_first: %s', args.batch_first)
         logging.info('  mix_precision: %s', args.mix_precision)
         logging.info('  freeze_backbone: %s', args.freeze_backbone)
+        logging.info('  freeze_enc: %s', args.freeze_enc)
+        logging.info('  freeze_dec: %s', args.freeze_dec)
 
 
 

@@ -22,15 +22,21 @@ class Transformer(nn.Module):
                  activation="relu", normalize_before=False,
                  return_intermediate_dec=False, enc_bn=False, dec_bn=False, batch_first=False):
         super().__init__()
-        #import ipdb; ipdb.set_trace()
         if enc_bn==False:
             encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                     dropout, activation, normalize_before)
         else:
+            encoder_layer_ln = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
+                                                    dropout, activation, normalize_before)
             encoder_layer = TransformerEncoderLayer_BN(d_model, nhead, dim_feedforward,
                                                     dropout, activation, normalize_before, batch_first)
 
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
+
+        # for partial bn/ln
+        #encoder_layer_ = nn.ModuleList([encoder_layer, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln])
+        #self.encoder = TransformerEncoder(encoder_layer_, num_encoder_layers, encoder_norm)
+
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
 
         if dec_bn==False:
@@ -112,7 +118,30 @@ class TransformerEncoder(nn.Module):
             output = self.norm(output)
 
         return output
+'''
+class TransformerEncoder(nn.Module):
 
+    def __init__(self, encoder_layer, num_layers, norm=None):
+        super().__init__()
+        self.layers = encoder_layer
+        self.num_layers = num_layers
+        self.norm = norm
+
+    def forward(self, src,
+                mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None):
+        output = src
+
+        for layer in self.layers:
+            output = layer(output, src_mask=mask,
+                           src_key_padding_mask=src_key_padding_mask, pos=pos)
+
+        if self.norm is not None:
+            output = self.norm(output)
+
+        return output
+'''
 
 class TransformerDecoder(nn.Module):
 
