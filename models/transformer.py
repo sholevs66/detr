@@ -119,6 +119,7 @@ class TransformerEncoder(nn.Module):
 
         return output
 '''
+# for  partial bn/ln
 class TransformerEncoder(nn.Module):
 
     def __init__(self, encoder_layer, num_layers, norm=None):
