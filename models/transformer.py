@@ -10,6 +10,8 @@ Copy-paste from torch.nn.Transformer with modifications:
 import copy
 from typing import Optional, List
 
+from numpy import isin
+
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
@@ -27,10 +29,18 @@ class Transformer(nn.Module):
             encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                     dropout, activation, normalize_before)
         else:
+            encoder_layer_ln = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
+                                                    dropout, activation, normalize_before)
             encoder_layer = TransformerEncoderLayer_BN(d_model, nhead, dim_feedforward,
                                                     dropout, activation, normalize_before, batch_first)
 
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
+        
+        # for partial bn/ln encoder
+        #encoder_layer_ = nn.ModuleList([encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln])
+        #self.encoder = TransformerEncoder(encoder_layer_, num_encoder_layers, encoder_norm)
+
+        # for all bn/ln encoder
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
 
         if dec_bn==False:
@@ -38,13 +48,19 @@ class Transformer(nn.Module):
                                                     dropout, activation, normalize_before)
             decoder_norm = nn.LayerNorm(d_model)
         else:
+            decoder_layer_ln = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
+                                                    dropout, activation, normalize_before)
             decoder_layer = TransformerDecoderLayer_BN(d_model, nhead, dim_feedforward,
                                                     dropout, activation, normalize_before, batch_first)
             decoder_norm = nn.BatchNorm1d(d_model) # check if this is the problem in all BN DETR
+            decoder_norm = None  # this is for MZ so we won't have 2 batch norm one after another - shouldn't make a difference
             #decoder_norm = nn.LayerNorm(d_model)
 
-        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
-                                          return_intermediate=return_intermediate_dec)
+        # for partial bn/ln decoder
+        #decoder_layer_ = nn.ModuleList([decoder_layer, decoder_layer_ln, decoder_layer_ln, decoder_layer_ln, decoder_layer_ln, decoder_layer_ln])
+        #self.decoder = TransformerDecoder(decoder_layer_, num_decoder_layers, decoder_norm, return_intermediate=return_intermediate_dec)
+
+        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm, return_intermediate=return_intermediate_dec)
 
         self._reset_parameters()
 
@@ -61,8 +77,7 @@ class Transformer(nn.Module):
     def forward(self, src, mask, query_embed, pos_embed):
         # flatten NxCxHxW to HWxNxC
         # src = [batch, 256, H/32, W/32]
-        
-
+        #import ipdb; ipdb.set_trace()
         if self.batch_first:
             bs, c, h, w = src.shape
             src = src.flatten(2).permute(0, 2, 1)   # [batch, H/32 * W/32, 256]
@@ -114,6 +129,27 @@ class TransformerEncoder(nn.Module):
         return output
 
 
+'''
+# for  partial bn/ln encoder
+class TransformerEncoder(nn.Module):
+    def __init__(self, encoder_layer, num_layers, norm=None):
+        super().__init__()
+        self.layers = encoder_layer
+        self.num_layers = num_layers
+        self.norm = norm
+    def forward(self, src,
+                mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None):
+        output = src
+        for layer in self.layers:
+            output = layer(output, src_mask=mask,
+                           src_key_padding_mask=src_key_padding_mask, pos=pos)
+        if self.norm is not None:
+            output = self.norm(output)
+        return output
+'''
+
 class TransformerDecoder(nn.Module):
 
     def __init__(self, decoder_layer, num_layers, norm=None, return_intermediate=False):
@@ -131,7 +167,71 @@ class TransformerDecoder(nn.Module):
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None):
         output = tgt
-        #import ipdb; ipdb.set_trace()
+        intermediate = []
+
+        for layer in self.layers:
+            output = layer(output, memory, tgt_mask=tgt_mask,
+                           memory_mask=memory_mask,
+                           tgt_key_padding_mask=tgt_key_padding_mask,
+                           memory_key_padding_mask=memory_key_padding_mask,
+                           pos=pos, query_pos=query_pos)
+            if self.return_intermediate:
+                if isinstance(self.norm, nn.LayerNorm):
+                    intermediate.append(self.norm(output))
+                elif isinstance(self.norm, nn.BatchNorm1d):
+                    # if BN
+                    #output = output.permute(1, 2, 0) # [qeury, batch, channel]=[100,2,256] -> [batch, channel, query]
+                    #output = self.norm(output)
+                    #output = output.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+                    #intermediate.append(output)
+                    intermediate.append(self.norm(output.permute(1, 2, 0)).permute(2, 0, 1))
+                else:
+                    intermediate.append(output)
+
+        if self.norm is not None:
+            if isinstance(self.norm, nn.LayerNorm):
+                output = self.norm(output)
+            else:
+                # If BN
+                # regular
+                if self.layers[0].batch_first == False:
+                    output = output.permute(1, 2, 0) # [qeury, batch, channel]=[100,2,256] -> [batch, channel, query]
+                    output = self.norm(output)
+                    output = output.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
+                else:
+                    # for onnx output which uses 'batch_first' = True
+                    output = output.permute(0, 2, 1) # [batch, query, channel]=[2,100,256] -> [batch, channel, query]
+                    output = self.norm(output)
+                    output = output.permute(0, 2, 1) # [batch, channel, query] -> [batch, query, channel]
+            if self.return_intermediate:
+                intermediate.pop()
+                intermediate.append(output)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate)
+
+        return output.unsqueeze(0)  # [#queries, batch, 256] -> [1, #queries, batch, 256]
+
+
+'''
+# for partial bn/ln decoder
+class TransformerDecoder(nn.Module):
+
+    def __init__(self, decoder_layer, num_layers, norm=None, return_intermediate=False):
+        super().__init__()
+        self.layers = decoder_layer
+        self.num_layers = num_layers
+        self.norm = norm
+        self.return_intermediate = return_intermediate
+
+    def forward(self, tgt, memory,
+                tgt_mask: Optional[Tensor] = None,
+                memory_mask: Optional[Tensor] = None,
+                tgt_key_padding_mask: Optional[Tensor] = None,
+                memory_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None,
+                query_pos: Optional[Tensor] = None):
+        output = tgt
         intermediate = []
 
         for layer in self.layers:
@@ -175,6 +275,7 @@ class TransformerDecoder(nn.Module):
             return torch.stack(intermediate)
 
         return output.unsqueeze(0)  # [#queries, batch, 256] -> [1, #queries, batch, 256]
+'''
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -204,7 +305,7 @@ class TransformerEncoderLayer(nn.Module):
                      src_mask: Optional[Tensor] = None,
                      src_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None):
-        #import ipdb; ipdb.set_trace()
+
         q = k = self.with_pos_embed(src, pos)   # [qeury, batch, channel] = [768, 2, 256]
         src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
@@ -282,7 +383,7 @@ class TransformerEncoderLayer_BN(nn.Module):
             src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                                 key_padding_mask=src_key_padding_mask)[0]
             src = src + self.dropout1(src2) # [batch, query, channel] = [2, 768, 256]
-            #import ipdb; ipdb.set_trace()
+
             src = src.permute(0, 2, 1) # [batch, query, channel] -> [batch, channel, query]
             src = self.norm1(src) # compute statistics for each channel over the batch,query -> mean=[channel,1] & var=[channel,1]
             src = src.permute(0, 2, 1) # [batch, channel, query] -> [batch, query, channel]
@@ -305,7 +406,7 @@ class TransformerEncoderLayer_BN(nn.Module):
             src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                                 key_padding_mask=src_key_padding_mask)[0]
             src = src + self.dropout1(src2) # [qeury, batch, channel] = [768, 2, 256]
-            #import ipdb; ipdb.set_trace()
+
             src = src.permute(1, 2, 0) # [qeury, batch, channel] -> [batch, channel, query]
             src = self.norm1(src) # compute statistics for each channel over the batch,query -> mean=[channel,1] & var=[channel,1]
             src = src.permute(2, 0, 1) # [batch, channel, query] -> [qeury, batch, channel]
@@ -384,7 +485,7 @@ class TransformerDecoderLayer(nn.Module):
                      memory_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None):
-        #import ipdb; ipdb.set_trace()
+
         q = k = self.with_pos_embed(tgt, query_pos)     # [#queries, #batch, 256]
         tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
                               key_padding_mask=tgt_key_padding_mask)[0]
@@ -431,7 +532,7 @@ class TransformerDecoderLayer(nn.Module):
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None):
-        #import ipdb; ipdb.set_trace()
+
         if self.normalize_before:
             return self.forward_pre(tgt, memory, tgt_mask, memory_mask,
                                     tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
@@ -481,7 +582,7 @@ class TransformerDecoderLayer_BN(nn.Module):
                      memory_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None):
-        #import ipdb; ipdb.set_trace()
+
         if self.batch_first:
             # batch first for outputting onnx
             q = k = self.with_pos_embed(tgt, query_pos)     # tgt=q=k=[#queries=100, #batch, 256]
@@ -597,7 +698,6 @@ class TransformerDecoderLayer_BN(nn.Module):
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None):
-        #import ipdb; ipdb.set_trace()
         if self.normalize_before:
             return self.forward_pre(tgt, memory, tgt_mask, memory_mask,
                                     tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
@@ -617,7 +717,7 @@ def build_transformer(args):
         num_encoder_layers=args.enc_layers,
         num_decoder_layers=args.dec_layers,
         normalize_before=args.pre_norm,
-        return_intermediate_dec=True,
+        return_intermediate_dec=args.return_intermediate_dec,
         enc_bn=args.enc_bn,
         dec_bn=args.dec_bn,
         batch_first=args.batch_first

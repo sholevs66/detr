@@ -268,18 +268,18 @@ class PostProcess(nn.Module):
                           For visualization, this should be the image size after data augment, but before padding
         """
         out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
-
+        #import ipdb; ipdb.set_trace()
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
 
-        prob = F.softmax(out_logits, -1)
-        scores, labels = prob[..., :-1].max(-1)
+        prob = F.softmax(out_logits, -1)         # soft max along the 92 -> prob=[batch=2, 100, 92]
+        scores, labels = prob[..., :-1].max(-1)  # calc the max & argmax for each of the 100 queries -> scores=[2,100], labels=[2,100]
 
         # convert to [x0, y0, x1, y1] format
         boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
         # and from relative [0, 1] to absolute [0, height] coordinates
-        img_h, img_w = target_sizes.unbind(1)
-        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
+        img_h, img_w = target_sizes.unbind(1)  # img_h = [batch] = array of height of each image in the batch / img_w = ...
+        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)  # [batch, 4] 
         boxes = boxes * scale_fct[:, None, :]
 
         results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
@@ -312,6 +312,8 @@ def build(args):
     # For more details on this, check the following discussion
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
     num_classes = 20 if args.dataset_file != 'coco' else 91
+    #if args.mini_coco:
+    #    num_classes = 12
     if args.dataset_file == "coco_panoptic":
         # for panoptic, we just add a num_classes that is large enough to hold
         # max_obj_id + 1, but the exact value doesn't really matter

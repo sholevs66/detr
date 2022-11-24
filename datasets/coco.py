@@ -121,6 +121,8 @@ def make_coco_transforms(image_set):
 
     scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
 
+
+    # org
     if image_set == 'train':
         return T.Compose([
             T.RandomHorizontalFlip(),
@@ -135,12 +137,37 @@ def make_coco_transforms(image_set):
             normalize,
         ])
 
+
+    # org
     if image_set == 'val':
         return T.Compose([
             T.RandomResize([800], max_size=1333),
             normalize,
         ])
 
+    '''
+    # fixed 800x800 wo arp
+    if image_set == 'train':
+        return T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomSelect(
+                T.RandomResize([(640,640)]),
+                T.Compose([
+                    T.RandomResize([400, 500, 600]),
+                    T.RandomSizeCrop(384, 600),
+                    T.RandomResize([(800, 800)]),
+                ])
+            ),
+            normalize,
+        ])
+
+    # fixed 800x800 wo arp
+    if image_set == 'val':
+        return T.Compose([
+            T.RandomResize([(800,800)]),
+            normalize,
+        ])
+    '''
 
     '''
     # for fixed 640x640 ARP with padding - should be disabled for regular DETR
@@ -157,10 +184,16 @@ def build(image_set, args):
     root = Path(args.coco_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
     mode = 'instances'
-    PATHS = {
-        "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
-        "val": (root / "val2017", root / "annotations" / f'{mode}_val2017.json'),
+    if args.mini_coco:
+        PATHS = {
+        "train": (root / "train2017", root / "annotations" / f'{mode}_minitrain2017_11classes.json'),
+        "val": (root / "val2017", root / "annotations" / f'{mode}_minival2017_11classes.json'),
     }
+    else:
+        PATHS = {
+            "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
+            "val": (root / "val2017", root / "annotations" / f'{mode}_val2017.json'),
+        }
 
     img_folder, ann_file = PATHS[image_set]
     dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set), return_masks=args.masks)

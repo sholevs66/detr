@@ -31,8 +31,8 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--batch_size', default=2, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=300, type=int)
-    parser.add_argument('--lr_drop', default=200, type=int)
+    parser.add_argument('--epochs', default=400, type=int)
+    parser.add_argument('--lr_drop', default=300, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
@@ -69,6 +69,12 @@ def get_args_parser():
 
     parser.add_argument('--freeze_backbone', action='store_true')
     parser.add_argument('--freeze_enc', action='store_true')
+    parser.add_argument('--freeze_dec', action='store_true')
+    parser.add_argument('--freeze_query', action='store_true')
+    parser.add_argument('--freeze_input_proj', action='store_true') # 2048 -> 256 channels in R50->transformer
+    parser.add_argument('--freeze_bbox_embed', action='store_true')
+    parser.add_argument('--freeze_class_embed', action='store_true')
+    parser.add_argument('--freeze_all', action='store_true')
     parser.add_argument('--mix_precision', action='store_true')
 
     # * Segmentation
@@ -78,6 +84,9 @@ def get_args_parser():
     # Loss
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                         help="Disables auxiliary decoding losses (loss at each layer)")
+    parser.add_argument('--no_return_intermediate_dec', dest='return_intermediate_dec', action='store_false',
+                        help="For exporting to onnx this needs to be false")
+                    
     # * Matcher
     parser.add_argument('--set_cost_class', default=1, type=float,
                         help="Class coefficient in the matching cost")
@@ -95,6 +104,7 @@ def get_args_parser():
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='coco')
+    parser.add_argument('--mini_coco', action='store_true')
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
@@ -147,10 +157,35 @@ def main(args):
         for p in model.backbone.parameters():
             p.requires_grad = False
 
-
     if args.freeze_enc:
         for p in model.transformer.encoder.parameters():
             p.requires_grad = False
+
+    if args.freeze_dec:
+        for p in model.transformer.decoder.parameters():
+            p.requires_grad = False
+
+    if args.freeze_query:
+        for p in model.query_embed.parameters():
+            p.requires_grad = False
+
+    if args.freeze_input_proj:
+        for p in model.input_proj.parameters():
+            p.requires_grad = False
+
+    if args.freeze_bbox_embed:
+        for p in model.bbox_embed.parameters():
+            p.requires_grad = False
+
+    if args.freeze_class_embed:
+        for p in model.class_embed.parameters():
+            p.requires_grad = False
+
+    if args.freeze_all:
+        for p in model.parameters():
+            p.requires_grad = False
+
+
 
     model_without_ddp = model
     if args.distributed:
@@ -169,6 +204,7 @@ def main(args):
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+    #lr_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=100)
 
     dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
@@ -208,17 +244,43 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         
-        model_without_ddp.load_state_dict(checkpoint['model'])  # original
-
+        #model_without_ddp.load_state_dict(checkpoint['model'])  # original
+        #import ipdb; ipdb.set_trace()
         # omer try to match org model with BN model
-        #load_pretrained_weight_omer(model_without_ddp, checkpoint)
-
+        load_pretrained_weight_omer(model_without_ddp, checkpoint)
+        #import ipdb; ipdb.set_trace()
         #model_without_ddp.load_state_dict(torch.load('8_gpu_run_enc_dec_bn_7.6.22/model_best.pth', map_location='cpu')) # for loading my saved model only pth
+        '''
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
+        '''
+    '''
+    #for p in model_without_ddp.transformer.encoder.layers[5].parameters():
+    #    p.requires_grad = True
+    if args.freeze_all:
+        for p in model_without_ddp.parameters():
+            p.requires_grad = False
     
+    for p in model_without_ddp.transformer.decoder.layers[0].parameters():
+        p.requires_grad = True
+    '''
+    '''
+    model_without_ddp.transformer.encoder.layers[5].linear1.bias.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].linear1.weight.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].linear2.bias.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].linear2.weight.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].norm1.bias.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].norm1.weight.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].norm2.bias.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].norm2.weight.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].norm3.bias.requires_grad = True
+    model_without_ddp.transformer.encoder.layers[5].norm3.weight.requires_grad = True
+    '''
+    #model_without_ddp.transformer.encoder.layers[0].norm1.reset_parameters()
+    #model_without_ddp.transformer.encoder.layers[0].norm2.reset_parameters()
+    #model_without_ddp.transformer.encoder.layers[0].norm3.reset_parameters()
     #import ipdb; ipdb.set_trace()
 
     if args.eval:
@@ -249,6 +311,9 @@ def main(args):
         logging.info('  batch_first: %s', args.batch_first)
         logging.info('  mix_precision: %s', args.mix_precision)
         logging.info('  freeze_backbone: %s', args.freeze_backbone)
+        logging.info('  freeze_enc: %s', args.freeze_enc)
+        logging.info('  freeze_dec: %s', args.freeze_dec)
+        logging.info('  mini_coco: %s', args.mini_coco)
 
 
 
@@ -258,6 +323,10 @@ def main(args):
 
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
+        
+        #if epoch > 2:
+        #    for g in optimizer.param_groups:
+        #        g['lr'] = 0.00001
 
         if args.distributed:
             sampler_train.set_epoch(epoch)
@@ -269,7 +338,7 @@ def main(args):
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint before LR drop and every 100 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 100 == 0:
+            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 50 == 0:
                 checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({

@@ -21,6 +21,9 @@ from models import build_model
 from main import get_args_parser
 from einops import rearrange, repeat
 
+import onnx
+from onnxsim import simplify
+
 
 class Attention(nn.Module):
     def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0., out_bias = False):
@@ -79,17 +82,11 @@ class Attention(nn.Module):
         attn = self.dropout(attn)
 
         out = torch.matmul(attn, v)
-        #import ipdb; ipdb.set_trace()
         out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out)
 
 
 def replace_attention(model):
-    a = 0
-    #for name, layer in model.transformer.encoder.named_children():
-    #model.transformer.encoder.layers[0].self_attn.in_proj_weight
-    #for name, layer in model.transformer.encoder.named_parameters():
-    #for name, layer in model.named_children():
     
     # encoder 
     for child in model.transformer.encoder.layers.children():
@@ -105,10 +102,13 @@ def replace_attention(model):
                 out_bias = bool(out_proj_bias.detach().cpu().numpy().sum())
                 attention_vit = Attention(dim=dim, dim_head=dim_head, dropout=0.1, out_bias=out_bias)
                 attention_vit.to_qkv.weight = in_proj_weight
-                #import ipdb; ipdb.set_trace()
+
                 attention_vit.to_q.weight = nn.Parameter(in_proj_weight[0:256])
                 attention_vit.to_k.weight = nn.Parameter(in_proj_weight[256:512])
                 attention_vit.to_v.weight = nn.Parameter(in_proj_weight[512:])
+                attention_vit.to_q.bias = nn.Parameter(in_proj_bias[0:256])
+                attention_vit.to_k.bias = nn.Parameter(in_proj_bias[256:512])
+                attention_vit.to_v.bias = nn.Parameter(in_proj_bias[512:])
                 attention_vit.to_out[0].weight = out_proj_weight
                 if out_bias:
                     attention_vit.to_out[0].bias = out_proj_bias
@@ -130,6 +130,9 @@ def replace_attention(model):
                 attention_vit.to_q.weight = nn.Parameter(in_proj_weight[0:256])
                 attention_vit.to_k.weight = nn.Parameter(in_proj_weight[256:512])
                 attention_vit.to_v.weight = nn.Parameter(in_proj_weight[512:])
+                attention_vit.to_q.bias = nn.Parameter(in_proj_bias[0:256])
+                attention_vit.to_k.bias = nn.Parameter(in_proj_bias[256:512])
+                attention_vit.to_v.bias = nn.Parameter(in_proj_bias[512:])
                 attention_vit.to_out[0].weight = out_proj_weight
                 if out_bias:
                     attention_vit.to_out[0].bias = out_proj_bias
@@ -137,35 +140,44 @@ def replace_attention(model):
 
 
 def main(args):
-    print(2)
+
     device = torch.device(args.device)
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
-    import ipdb; ipdb.set_trace()
     if not args.resume:
         print('No loaded model!')
 
     if args.resume:
-    #model_pth = torch.load(args.resume, map_location='cpu')
-    #import ipdb; ipdb.set_trace()
-        model.load_state_dict(torch.load(args.resume))
-
-    import ipdb; ipdb.set_trace()
+        a = torch.load(args.resume, map_location='cpu')
+        if 'model' in a:
+            model.load_state_dict(a['model'])
+        else:
+            model.load_state_dict(torch.load(args.resume))
 
     replace_attention(model)
 
     # to onnx
     model.eval()
-    imgs = torch.zeros(1,3,600,800, dtype=torch.float32).to(device)
+    imgs = torch.zeros(1,3,800,800, dtype=torch.float32).to(device)
     outputs = model(imgs)
-    torch.onnx.export(model, imgs, './detr_r50_enc_bn_dec_bn_2layers_600x800_SingleOutHead.onnx', input_names=['test_input'], output_names=['logits', 'boxes'], training=torch.onnx.TrainingMode.PRESERVE, opset_version=11)
+    torch.onnx.export(model, imgs, args.out_name + '.onnx', input_names=['test_input'], output_names=['logits', 'boxes'], training=torch.onnx.TrainingMode.PRESERVE, opset_version=11)
+    print('model saved at: ', args.out_name + '.onnx')
+
+    # if also simplify
+    if args.simplify:
+        model_onnx = onnx.load(args.out_name + '.onnx')
+        model_simp, check = simplify(model_onnx)
+        onnx.save(model_simp, args.out_name + '_simplify.onnx')
+        print('model simplified saved at: ', args.out_name + '_simplify.onnx')
 
 
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
+    parser.add_argument('--out_name', default='detr', type=str, help="Name for the onnx output")
+    parser.add_argument('--simplify', action='store_true')
     args = parser.parse_args()
     
     main(args)
