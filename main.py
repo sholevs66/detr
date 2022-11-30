@@ -129,12 +129,6 @@ def get_args_parser():
 
 def main(args):
     
-    # clearML
-    #task = Task.init(project_name="DETR", task_name="detr") # this works good - only creates 8 runs on clearml but who cares
-    #if int(os.environ.get('LOCAL_RANK', 0)) == 0:
-    #    task = Task.init(project_name='DETR', task_name='all_bn_detr')
-    print('turn on clearML or tensorboard!')
-
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
 
@@ -149,7 +143,7 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
-    #import ipdb; ipdb.set_trace()
+
     model, criterion, postprocessors = build_model(args)
     model.to(device)
 
@@ -186,7 +180,6 @@ def main(args):
             p.requires_grad = False
 
 
-
     model_without_ddp = model
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
@@ -204,7 +197,6 @@ def main(args):
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
-    #lr_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=100)
 
     dataset_train = build_dataset(image_set='train', args=args)
     dataset_val = build_dataset(image_set='val', args=args)
@@ -235,7 +227,6 @@ def main(args):
         checkpoint = torch.load(args.frozen_weights, map_location='cpu')
         model_without_ddp.detr.load_state_dict(checkpoint['model'])
 
-    #import ipdb; ipdb.set_trace()
     output_dir = Path(args.output_dir)
     if args.resume:
         if args.resume.startswith('https'):
@@ -245,27 +236,17 @@ def main(args):
             checkpoint = torch.load(args.resume, map_location='cpu')
         
         #model_without_ddp.load_state_dict(checkpoint['model'])  # original
-        #import ipdb; ipdb.set_trace()
+
         # omer try to match org model with BN model
         load_pretrained_weight_omer(model_without_ddp, checkpoint)
-        #import ipdb; ipdb.set_trace()
-        #model_without_ddp.load_state_dict(torch.load('8_gpu_run_enc_dec_bn_7.6.22/model_best.pth', map_location='cpu')) # for loading my saved model only pth
+
         '''
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
         '''
-    '''
-    #for p in model_without_ddp.transformer.encoder.layers[5].parameters():
-    #    p.requires_grad = True
-    if args.freeze_all:
-        for p in model_without_ddp.parameters():
-            p.requires_grad = False
-    
-    for p in model_without_ddp.transformer.decoder.layers[0].parameters():
-        p.requires_grad = True
-    '''
+
     '''
     model_without_ddp.transformer.encoder.layers[5].linear1.bias.requires_grad = True
     model_without_ddp.transformer.encoder.layers[5].linear1.weight.requires_grad = True
@@ -324,10 +305,6 @@ def main(args):
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         
-        #if epoch > 2:
-        #    for g in optimizer.param_groups:
-        #        g['lr'] = 0.00001
-
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(
@@ -368,37 +345,6 @@ def main(args):
         writer.add_scalars("loss_bbox", {'train':train_stats['loss_bbox'], 'test':test_stats['loss_bbox']}, epoch)
         writer.add_scalars("loss_giou", {'train':train_stats['loss_giou'], 'test':test_stats['loss_giou']}, epoch)
 
-        '''
-        # save to clearML
-        a=list(coco_evaluator.coco_eval.values())[0]
-        Logger.current_logger().report_scalar("mAP", "val mAP", iteration=epoch, value=a.stats[0])
-        #Task.current_task().get_logger().report_scalar("test", "mAP", iteration=epoch, value=a.stats[0])
-
-        Logger.current_logger().report_scalar("total loss", "train", iteration=epoch, value=train_stats['loss'])
-        Logger.current_logger().report_scalar("total loss", "val", iteration=epoch, value=test_stats['loss'])
-        #Task.current_task().get_logger().report_scalar("train", "loss", iteration=epoch, value=train_stats['loss'])
-        #Task.current_task().get_logger().report_scalar("test", "loss", iteration=epoch, value=test_stats['loss'])
-
-        Logger.current_logger().report_scalar("class error", "train", iteration=epoch, value=train_stats['class_error'])
-        Logger.current_logger().report_scalar("class error", "val", iteration=epoch, value=test_stats['class_error'])
-        #Task.current_task().get_logger().report_scalar("train", "class error", iteration=epoch, value=train_stats['class_error'])
-        #Task.current_task().get_logger().report_scalar("test", "class error", iteration=epoch, value=test_stats['class_error'])
-
-        Logger.current_logger().report_scalar("ce loss", "train", iteration=epoch, value=train_stats['loss_ce'])
-        Logger.current_logger().report_scalar("ce loss", "val", iteration=epoch, value=test_stats['loss_ce'])
-        #Task.current_task().get_logger().report_scalar("train", "loss ce", iteration=epoch, value=train_stats['loss_ce'])
-        #Task.current_task().get_logger().report_scalar("test", "loss ce", iteration=epoch, value=test_stats['loss_ce'])
-
-        Logger.current_logger().report_scalar("bbox loss", "train", iteration=epoch, value=train_stats['loss_bbox'])
-        Logger.current_logger().report_scalar("bbox loss", "val", iteration=epoch, value=test_stats['loss_bbox'])
-        #Task.current_task().get_logger().report_scalar("train", "loss bbox", iteration=epoch, value=train_stats['loss_bbox'])
-        #Task.current_task().get_logger().report_scalar("test", "loss bbox", iteration=epoch, value=test_stats['loss_bbox'])
-
-        Logger.current_logger().report_scalar("giou loss", "train", iteration=epoch, value=train_stats['loss_giou'])
-        Logger.current_logger().report_scalar("giou loss", "val", iteration=epoch, value=test_stats['loss_giou'])
-        #Task.current_task().get_logger().report_scalar("train", "loss giou", iteration=epoch, value=train_stats['loss_giou'])
-        #Task.current_task().get_logger().report_scalar("test", "loss giou", iteration=epoch, value=test_stats['loss_giou'])
-        '''
         # save best val AP mode
         if a.stats[0] > best_val_ap:
             best_val_ap = a.stats[0]
@@ -428,9 +374,6 @@ def main(args):
     print('Training time {}'.format(total_time_str))
     writer.flush()
     writer.close()
-
-
-
 
 
 if __name__ == '__main__':

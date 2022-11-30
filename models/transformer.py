@@ -24,7 +24,7 @@ class Transformer(nn.Module):
                  activation="relu", normalize_before=False,
                  return_intermediate_dec=False, enc_bn=False, dec_bn=False, batch_first=False):
         super().__init__()
-        #import ipdb; ipdb.set_trace()
+
         if enc_bn==False:
             encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                     dropout, activation, normalize_before)
@@ -77,7 +77,7 @@ class Transformer(nn.Module):
     def forward(self, src, mask, query_embed, pos_embed):
         # flatten NxCxHxW to HWxNxC
         # src = [batch, 256, H/32, W/32]
-        #import ipdb; ipdb.set_trace()
+
         if self.batch_first:
             bs, c, h, w = src.shape
             src = src.flatten(2).permute(0, 2, 1)   # [batch, H/32 * W/32, 256]

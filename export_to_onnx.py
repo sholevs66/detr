@@ -153,7 +153,8 @@ def main(args):
         if 'model' in a:
             model.load_state_dict(a['model'])
         else:
-            model.load_state_dict(torch.load(args.resume))
+            model.load_state_dict(a)
+            
 
     replace_attention(model)
 
