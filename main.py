@@ -18,11 +18,9 @@ from datasets import build_dataset, get_coco_api_from_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
 
-from util.load_model import load_pretrained_weight_omer
+from util.load_model import load_pretrained_weights
 
 from torch.utils.tensorboard import SummaryWriter
-
-#from clearml import Task, Logger
 
 
 def get_args_parser():
@@ -104,7 +102,6 @@ def get_args_parser():
 
     # dataset parameters
     parser.add_argument('--dataset_file', default='coco')
-    parser.add_argument('--mini_coco', action='store_true')
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
@@ -238,7 +235,7 @@ def main(args):
         #model_without_ddp.load_state_dict(checkpoint['model'])  # original
 
         # omer try to match org model with BN model
-        load_pretrained_weight_omer(model_without_ddp, checkpoint)
+        load_pretrained_weights(model_without_ddp, checkpoint)
 
         '''
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
@@ -248,6 +245,7 @@ def main(args):
         '''
 
     '''
+    # Sometimes we want to freeze all model and then turn on grads for certain specific layers
     model_without_ddp.transformer.encoder.layers[5].linear1.bias.requires_grad = True
     model_without_ddp.transformer.encoder.layers[5].linear1.weight.requires_grad = True
     model_without_ddp.transformer.encoder.layers[5].linear2.bias.requires_grad = True
@@ -262,7 +260,6 @@ def main(args):
     #model_without_ddp.transformer.encoder.layers[0].norm1.reset_parameters()
     #model_without_ddp.transformer.encoder.layers[0].norm2.reset_parameters()
     #model_without_ddp.transformer.encoder.layers[0].norm3.reset_parameters()
-    #import ipdb; ipdb.set_trace()
 
     if args.eval:
         test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
@@ -294,8 +291,6 @@ def main(args):
         logging.info('  freeze_backbone: %s', args.freeze_backbone)
         logging.info('  freeze_enc: %s', args.freeze_enc)
         logging.info('  freeze_dec: %s', args.freeze_dec)
-        logging.info('  mini_coco: %s', args.mini_coco)
-
 
 
     print("Start training")

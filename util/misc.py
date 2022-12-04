@@ -330,6 +330,8 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
 
 '''
 # for 640x640 - pad by focrce to 640x640 - disable for regular DETR and activate the above
+# by default, this part of the collate pads according to the max dimension (after resizing), but in case of fixed 640x640 ARP, we use this to 
+# force 640x640
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     # TODO make this more general
     size_forced = 640

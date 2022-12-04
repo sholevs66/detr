@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import warnings
 
-def load_pretrained_weight_omer(model, checkpoint):
+def load_pretrained_weights(model, checkpoint):
     
     if 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']

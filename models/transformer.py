@@ -36,8 +36,8 @@ class Transformer(nn.Module):
 
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         
-        # for partial bn/ln encoder
-        #encoder_layer_ = nn.ModuleList([encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln])
+        # for partial bn/ln encoder - use this and disable the below active self.encoder & change the active 'TransformerEncoder' class
+        #encoder_layer_ = nn.ModuleList([encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer_ln, encoder_layer])
         #self.encoder = TransformerEncoder(encoder_layer_, num_encoder_layers, encoder_norm)
 
         # for all bn/ln encoder
