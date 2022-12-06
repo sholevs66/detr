@@ -251,7 +251,6 @@ class TransformerDecoder(nn.Module):
                     #intermediate.append(output)
                     intermediate.append(self.norm(output.permute(1, 2, 0)).permute(2, 0, 1))
 
-        #import ipdb; ipdb.set_trace()
         if self.norm is not None:
             if isinstance(self.norm, nn.LayerNorm):
                 output = self.norm(output)
