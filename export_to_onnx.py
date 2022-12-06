@@ -176,8 +176,7 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
-    parser = argparse.ArgumentParser(epilog='Example: CUDA_VISIBLE_DEVICES=0 python export_to_onnx.py --batch_first --enc_bn --dec_bn --no_aux_loss --backbone resnet50 --no_return_intermediate_dec --out_name my_detr_model.onnx')
+    parser = argparse.ArgumentParser(epilog='Example: CUDA_VISIBLE_DEVICES=0 python export_to_onnx.py --batch_first --enc_bn --dec_bn --no_aux_loss --backbone resnet50 --no_return_intermediate_dec --out_name my_detr_model.onnx', parents=[get_args_parser()])
     parser.add_argument('--out_name', default='detr', type=str, help="Name for the onnx output")
     parser.add_argument('--no_simplify', action='store_false')
     args = parser.parse_args()
